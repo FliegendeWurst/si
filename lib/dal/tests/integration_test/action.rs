@@ -4,11 +4,13 @@ use dal::{
     action::prototype::ActionKind, action::prototype::ActionPrototype, action::Action,
     action::ActionState, AttributeValue, Component, DalContext,
 };
-use dal_test::helpers::create_component_for_default_schema_name_in_default_view;
 use dal_test::helpers::create_component_for_schema_name_with_type_on_default_view;
 use dal_test::helpers::ChangeSetTestHelpers;
 use dal_test::helpers::{
     connect_components_with_socket_names, disconnect_components_with_socket_names,
+};
+use dal_test::helpers::{
+    create_component_for_default_schema_name_in_default_view, update_attribute_value_for_component,
 };
 use dal_test::test;
 use pretty_assertions_sorted::assert_eq;
@@ -528,4 +530,190 @@ async fn actions_are_ordered_correctly(ctx: &mut DalContext) {
         action_graph.direct_dependencies_of(third_component_action),
         vec![first_component_action]
     );
+}
+
+#[test]
+async fn destroy_actions_are_ordered_correctly(ctx: &mut DalContext) -> dal_test::Result<()> {
+    //create a component and draw edges to another one
+    let first_component = create_component_for_default_schema_name_in_default_view(
+        ctx,
+        "small even lego",
+        "first_component",
+    )
+    .await
+    .expect("could not create component");
+    let second_component = create_component_for_default_schema_name_in_default_view(
+        ctx,
+        "small odd lego",
+        "second_component",
+    )
+    .await
+    .expect("could not create component");
+    let first_component_id = first_component.id();
+    let second_component_id = second_component.id();
+
+    //connect them
+    connect_components_with_socket_names(
+        ctx,
+        first_component.id(),
+        "one",
+        second_component.id(),
+        "one",
+    )
+    .await
+    .expect("could not connect components with socket names");
+    update_attribute_value_for_component(
+        ctx,
+        first_component.id(),
+        &["root", "domain", "one"],
+        serde_json::json!["1"],
+    )
+    .await
+    .expect("could not update attribute value");
+    let graph = ActionDependencyGraph::for_workspace(ctx).await?;
+    dbg!(graph.independent_actions());
+    for action in graph.independent_actions() {
+        let action_found = Action::get_by_id(ctx, action).await?;
+        dbg!(action_found);
+    }
+    ChangeSetTestHelpers::commit_and_update_snapshot_to_visibility(ctx)
+        .await
+        .expect("could not commit");
+    let graph = ActionDependencyGraph::for_workspace(ctx).await?;
+    dbg!(graph.independent_actions());
+    for action in graph.independent_actions() {
+        let action_found = Action::get_by_id(ctx, action).await?;
+        dbg!(action_found);
+    }
+
+    // Apply changeset so it runs the creation action
+    let graph = ActionDependencyGraph::for_workspace(ctx).await?;
+    dbg!(graph.independent_actions());
+    for action in graph.independent_actions() {
+        let action_found = Action::get_by_id(ctx, action).await?;
+        dbg!(action_found);
+    }
+    ChangeSetTestHelpers::apply_change_set_to_base(ctx)
+        .await
+        .expect("apply changeset to base");
+    let graph = ActionDependencyGraph::for_workspace(ctx).await?;
+    dbg!(graph.independent_actions());
+    for action in graph.independent_actions() {
+        let action_found = Action::get_by_id(ctx, action).await?;
+        dbg!(action_found);
+    }
+    ChangeSetTestHelpers::wait_for_actions_to_run(ctx)
+        .await
+        .expect("deadline for actions to run exceeded");
+    let graph = ActionDependencyGraph::for_workspace(ctx).await?;
+    dbg!(graph.independent_actions());
+    for action in graph.independent_actions() {
+        let action_found = Action::get_by_id(ctx, action).await?;
+        dbg!(action_found);
+    }
+
+    first_component.delete(ctx).await.expect("delete component");
+    ChangeSetTestHelpers::commit_and_update_snapshot_to_visibility(ctx)
+        .await
+        .expect("could not commit");
+    second_component
+        .delete(ctx)
+        .await
+        .expect("delete component");
+    ChangeSetTestHelpers::commit_and_update_snapshot_to_visibility(ctx)
+        .await
+        .expect("could not commit");
+
+    // {
+    //     let first_action_id =
+    //         Action::find_for_kind_and_component_id(ctx, first_component_id, ActionKind::Destroy)
+    //             .await?
+    //             .pop()
+    //             .unwrap();
+    //     let second_action_id =
+    //         Action::find_for_kind_and_component_id(ctx, second_component_id, ActionKind::Destroy)
+    //             .await?
+    //             .pop()
+    //             .unwrap();
+    //     let graph = ActionDependencyGraph::for_workspace(ctx).await?;
+    //     assert_eq!(
+    //         vec![second_action_id],
+    //         graph.get_all_dependencies(first_action_id)
+    //     );
+    //     assert!(graph.get_all_dependencies(second_action_id).is_empty());
+    //     assert_eq!(
+    //         vec![first_action_id],
+    //         graph.direct_dependencies_of(second_action_id)
+    //     );
+    //     assert!(graph.direct_dependencies_of(first_action_id).is_empty());
+    // }
+
+    // ChangeSetTestHelpers::commit_and_update_snapshot_to_visibility(ctx)
+    //     .await
+    //     .expect("could not commit");
+
+    {
+        let first_action_id =
+            Action::find_for_kind_and_component_id(ctx, first_component_id, ActionKind::Destroy)
+                .await?
+                .pop()
+                .unwrap();
+        // let second_action_id =
+        //     Action::find_for_kind_and_component_id(ctx, second_component_id, ActionKind::Destroy)
+        //         .await?
+        //         .pop()
+        //         .unwrap();
+        let graph = ActionDependencyGraph::for_workspace(ctx).await?;
+        // assert_eq!(
+        //     vec![second_action_id],
+        //     graph.get_all_dependencies(first_action_id)
+        // );
+        // assert!(graph.get_all_dependencies(second_action_id).is_empty());
+        // assert_eq!(
+        //     vec![first_action_id],
+        //     graph.direct_dependencies_of(second_action_id)
+        // );
+        assert!(graph.direct_dependencies_of(first_action_id).is_empty());
+        dbg!(graph.independent_actions());
+        for action in graph.independent_actions() {
+            let action_found = Action::get_by_id(ctx, action).await?;
+            dbg!(action_found);
+        }
+    }
+
+    ChangeSetTestHelpers::apply_change_set_to_base(ctx)
+        .await
+        .expect("apply changeset to base");
+    ChangeSetTestHelpers::wait_for_actions_to_run(ctx)
+        .await
+        .expect("deadline for actions to run exceeded");
+
+    {
+        // NOTE(nick): this should fail!
+        let first_action_id =
+            Action::find_for_kind_and_component_id(ctx, first_component_id, ActionKind::Destroy)
+                .await?
+                .pop()
+                .unwrap();
+        let second_action_id =
+            Action::find_for_kind_and_component_id(ctx, second_component_id, ActionKind::Destroy)
+                .await?
+                .pop()
+                .unwrap();
+        let graph = ActionDependencyGraph::for_workspace(ctx).await?;
+        assert_eq!(
+            vec![second_action_id],
+            graph.get_all_dependencies(first_action_id)
+        );
+        assert!(graph.get_all_dependencies(second_action_id).is_empty());
+        assert_eq!(
+            vec![first_action_id],
+            graph.direct_dependencies_of(second_action_id)
+        );
+        assert!(graph.direct_dependencies_of(first_action_id).is_empty());
+    }
+
+    assert!(false);
+
+    Ok(())
 }
