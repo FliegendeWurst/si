@@ -193,6 +193,7 @@ async function execute(
   { executionId }: RequestCtx,
   { component, responseType }: ResolverFunc,
   code: string,
+  timeout: number,
 ): Promise<ResolverFunctionResult> {
   let resolverFunctionResult: Record<string, unknown>;
   try {
@@ -200,6 +201,7 @@ async function execute(
       code,
       FunctionKind.ResolverFunction,
       executionId,
+      timeout,
       component.data.properties,
     );
   } catch (err) {

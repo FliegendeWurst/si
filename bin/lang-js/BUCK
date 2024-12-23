@@ -37,6 +37,10 @@ deno_compile(
     name = "bin",
     main = "src/index.ts",
     out = "lang-js",
+    srcs = glob([
+        "src/**/*.ts",
+        "src/**/*.js",
+    ]),
     permissions = [
         "allow-all",
     ],
@@ -59,7 +63,7 @@ deno_format(
 )
 
 deno_test(
-    name = "test",
+    name = "test-unit",
     srcs = glob(["**/*_test.ts", "**/*.test.ts"]),
     ignore = ["node_modules"],
 )

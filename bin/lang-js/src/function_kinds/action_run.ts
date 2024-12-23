@@ -31,12 +31,14 @@ async function execute(
   { executionId }: RequestCtx,
   { args }: ActionRunFunc,
   code: string,
+  timeout: number,
 ): Promise<ActionRunResult> {
   try {
     const actionRunResult = await runCode(
       code,
       FunctionKind.ActionRun,
       executionId,
+      timeout,
       args as Record<string, unknown>,
     );
 

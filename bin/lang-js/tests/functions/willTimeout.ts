@@ -1,3 +1,4 @@
+// deno-lint-ignore-file
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 async function main() {

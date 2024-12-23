@@ -27,6 +27,7 @@ async function execute(
   { executionId }: RequestCtx,
   _: SchemaVariantDefinitionFunc,
   code: string,
+  timeout: number,
 ): Promise<SchemaVariantDefinitionResult> {
   let result: Record<string, unknown>;
   try {
@@ -34,6 +35,7 @@ async function execute(
       code,
       FunctionKind.SchemaVariantDefinition,
       executionId,
+      timeout,
       {},
     );
     debug({ result: JSON.stringify(result) });

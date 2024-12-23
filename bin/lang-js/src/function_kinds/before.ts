@@ -26,12 +26,14 @@ async function execute(
   { executionId }: RequestCtx,
   { arg }: BeforeFunc,
   code: string,
+  timeout: number,
 ): Promise<BeforeResult> {
   try {
     await runCode(
       code,
       FunctionKind.Before,
       executionId,
+      timeout,
       arg as Record<string, unknown>,
     );
   } catch (err) {

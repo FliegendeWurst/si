@@ -1,5 +1,4 @@
 import * as _ from "lodash-es";
-import process from "node:process";
 import { base64Decode } from "./base64.ts";
 import { ctxFromRequest, Request, RequestCtx } from "./request.ts";
 import joi_validation, {
@@ -15,10 +14,10 @@ import schema_variant_definition, {
 import management_run, { ManagementFunc } from "./function_kinds/management.ts";
 import action_run, { ActionRunFunc } from "./function_kinds/action_run.ts";
 import before from "./function_kinds/before.ts";
-import { rawStorage, rawStorageRequest } from "./sandbox/requestStorage.ts";
-import { Debug, Debugger } from "./debug.ts";
+import { rawStorage } from "./sandbox/requestStorage.ts";
+import { Debugger } from "./debug.ts";
 import { transpile } from "jsr:@deno/emit";
-import * as w from "./worker.js";
+import * as _worker from "./worker.js";
 
 export enum FunctionKind {
   ActionRun = "actionRun",
@@ -36,7 +35,6 @@ export function functionKinds(): Array<string> {
 export type Parameters = Record<string, unknown>;
 
 export interface Func {
-  handler: string;
   codeBase64: string;
 }
 
@@ -102,13 +100,6 @@ export async function executeFunction(
 
   for (const beforeFunction of request.before || []) {
     await executor(ctx, beforeFunction, timeout, before);
-    // Set process environment variables, set from requestStorage
-    {
-      const requestStorageEnv = rawStorageRequest().env();
-      for (const key in requestStorageEnv) {
-        process.env[key] = requestStorageEnv[key];
-      }
-    }
   }
 
   // TODO Create Func types instead of casting request objs
@@ -184,20 +175,6 @@ export async function executeFunction(
   console.log(JSON.stringify(result));
 }
 
-class TimeoutError extends Error {
-  constructor(seconds: number) {
-    super(`function timed out after ${seconds} seconds`);
-    this.name = "TimeoutError";
-  }
-}
-
-function timer(seconds: number): Promise<never> {
-  const ms = seconds * 1000;
-  return new Promise((_, reject) => {
-    setTimeout(() => reject(new TimeoutError(seconds)), ms);
-  });
-}
-
 export async function executor<F extends Func, Result>(
   ctx: RequestCtx,
   func: F,
@@ -213,6 +190,7 @@ export async function executor<F extends Func, Result>(
       ctx: RequestCtx,
       func: F,
       code: string,
+      timeout: number,
     ) => Promise<JoiValidationResult | Result>;
   },
 ) {
@@ -224,10 +202,7 @@ export async function executor<F extends Func, Result>(
   const code = wrapCode(originalCode);
 
   // Following section throws on timeout or execution error
-  const result = await Promise.race([
-    execute(ctx, func, code),
-    timer(timeout),
-  ]);
+  const result = await execute(ctx, func, code, timeout);
   debug({ result });
   return result;
 }
@@ -236,9 +211,9 @@ export async function runCode(
   code: string,
   func_kind: FunctionKind,
   execution_id: string,
+  timeout: number,
   with_arg?: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const debug = Debug("runCode");
   code = await bundleCode(code);
   const currentEnv = rawStorage().env;
 
@@ -263,13 +238,14 @@ export async function runCode(
       func_kind,
       execution_id,
       with_arg,
-      env: currentEnv ?? {}
+      env: currentEnv ?? {},
+      timeout,
     });
 
     worker.onmessage = (event) => {
       const { result, env } = event.data;
       if (env) {
-        Object.assign(rawStorage().env, env);
+        rawStorage().env = { ...env };
       }
       resolve(result);
       worker.terminate();

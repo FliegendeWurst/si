@@ -25,6 +25,8 @@ def deno_compile_impl(ctx: AnalysisContext) -> list[Provider]:
         out.as_output(),
     )
 
+    cmd.hidden(ctx.attrs.srcs)
+
     if ctx.attrs.permissions:
         cmd.add("--permissions")
         cmd.add(ctx.attrs.permissions)
@@ -45,6 +47,11 @@ deno_compile = rule(
     attrs = {
         "main": attrs.source(
             doc = "The entry point TypeScript/JavaScript file",
+        ),
+        "srcs": attrs.list(
+            attrs.source(),
+            default = [],
+            doc = "All source files that are part of the compilation",
         ),
         "out": attrs.string(
             doc = "The name of the output binary",

@@ -33,6 +33,7 @@ async function execute(
   { executionId }: RequestCtx,
   args: JoiValidationFunc,
   code: string,
+  timeout: number,
 ): Promise<JoiValidationResult> {
   try {
     // NOTE(victor): Joi treats null as a value, so even if .required()
@@ -46,8 +47,26 @@ async function execute(
       code,
       FunctionKind.Validation,
       executionId,
+      timeout,
       parsedArgs,
     );
+
+    if (
+      result.err && typeof result.err === "object" && "name" in result.err &&
+      "message" in result.err
+    ) {
+      return {
+        protocol: "result",
+        status: "failure",
+        executionId,
+        error: {
+          kind: {
+            UserCodeException: result.err.name as string,
+          },
+          message: result.err.message as string,
+        },
+      };
+    }
     debug({ result });
     return {
       protocol: "result",
@@ -63,25 +82,25 @@ async function execute(
 const wrapCode = (_: string) => `
 async function run({ value, validationFormat }) {
   let definition;
-  let message;
   try {
     definition = JSON.parse(validationFormat);
   } catch (e) {
-    e.name = "JoiValidationJsonParsingError";
-    message = e;
+    const error = new Error('Invalid JSON format');
+    error.name = 'JoiValidationJsonParsingError';
+    throw error;
   }
 
   let schema;
   try {
     schema = Joi.build(definition);
   } catch (e) {
-    e.name = "JoiValidationFormatError";
-    e.message = e.message.replace("\\"value\\"", "validationFormat");
-    message = e;
+    const error = new Error('validationFormat must be of type object');
+    error.name = 'JoiValidationFormatError';
+    throw error;
   }
 
   const { error } = schema.validate(value);
-  return { "err": error };
+  return { err: error ? error.message : undefined };
 }`;
 
 export default {

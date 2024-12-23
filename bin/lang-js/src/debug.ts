@@ -1,13 +1,13 @@
 import process from "node:process";
 
-export type Debugger = (msg: any) => void;
+export type Debugger = (msg: unknown) => void;
 
 export function Debug(namespace: string): Debugger {
   const debugActive = process.env.SI_LANG_JS_LOG || process.env.SI_LOG;
-  return (msg: any) => {
+  return (msg: unknown) => {
     if (debugActive) {
       try {
-        const safeStringify = (obj: any): string => {
+        const safeStringify = (obj: unknown): string => {
           const seen = new WeakSet();
           return JSON.stringify(obj, (_, value) => {
             // Handle functions
@@ -41,7 +41,6 @@ export function Debug(namespace: string): Debugger {
           process.stderr.write(`${namespace} ${line}\n`);
         }
       } catch {
-        // Fallback if stringify fails completely
         process.stderr.write(
           `${namespace} [Debug Error: Unable to stringify message]\n`,
         );

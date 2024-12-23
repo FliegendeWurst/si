@@ -73,6 +73,7 @@ async function execute(
   { executionId }: RequestCtx,
   { thisComponent, components, currentView }: ManagementFunc,
   code: string,
+  timeout: number,
 ): Promise<ManagementFuncResult> {
   let managementResult: Record<string, unknown> | undefined | null;
   try {
@@ -80,6 +81,7 @@ async function execute(
       code,
       FunctionKind.Management,
       executionId,
+      timeout,
       { thisComponent, components, currentView },
     );
   } catch (err) {
