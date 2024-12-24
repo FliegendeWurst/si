@@ -1,6 +1,16 @@
 import { defineStore } from "pinia";
 import { ApiRequest } from "@si/vue-lib/pinia";
-import { WorkspaceId } from "./workspaces.store";
+import { Workspace, WorkspaceId } from "./workspaces.store";
+import api from "./api";
+import {
+  ApiBuilder,
+  ApiEndpoint,
+  ApiRequestDebouncer,
+  ApiRequestDescription,
+  BaseRequestParams,
+  URLPattern,
+} from "@si/vue-lib/src/utils/api_debouncer";
+import { AxiosInstance } from "axios";
 
 export type AuthTokenId = string;
 export interface AuthToken {
@@ -14,6 +24,73 @@ export interface AuthToken {
   lastUsedAt: Date | null;
   lastUsedIp: string | null;
 }
+
+type WorkspaceUrl = ["workspaces", { workspaceId: WorkspaceId }];
+type AuthApiEndpoints =
+  | {
+      url: ["workspaces"];
+      response: Workspace[];
+    }
+  | {
+      url: [...WorkspaceUrl];
+      response: Workspace;
+    }
+  | {
+      url: [...WorkspaceUrl, "authTokens"];
+      response: AuthToken[];
+    }
+  | {
+      url: [...WorkspaceUrl, "authTokens", { tokenId: AuthTokenId }];
+      response: AuthToken;
+    }
+  | {
+      url: [...WorkspaceUrl, "authTokens", { tokenId: AuthTokenId }];
+      method: "put";
+      params: { name: string | null };
+      response: AuthToken;
+    };
+
+type RequestParamsWithDefault<P extends BaseRequestParams | undefined> =
+  | Exclude<P, undefined>
+  | (undefined extends Extract<P, undefined> ? BaseRequestParams : never);
+
+/**
+ * Caches and debounces all api requests.
+ *
+ * Uses the passed-in API endpoint definitions to drive the request and response types.
+ */
+function useDebouncedApi<Api extends Endpoint>(api: AxiosInstance) {
+  const endpoints = new Map<
+    { url: Api["url"]; method?: Api["method"] },
+    ApiEndpoint
+  >();
+  return <E extends { url: Api["url"]; method?: Api["method"] }>(
+    endpointSpec: E,
+  ) => {
+    if (!endpoints.has(endpointSpec))
+      endpoints.set(
+        endpointSpec,
+        new ApiEndpoint(api, endpointSpec.url, endpointSpec.method),
+      );
+    return endpoints.get(endpointSpec) as ApiEndpoint<
+      Extract<Api, E>["response"],
+      RequestParamsWithDefault<Extract<Api, E>["params"]>
+    >;
+  };
+}
+const f = useDebouncedApi<AuthApiEndpoints>(api);
+const f2 = f({
+  url: ["workspaces", { workspaceId: "blah" }, "authTokens", { tokenId: "x" }],
+});
+async function blah() {
+  const r = await f2.fetch();
+}
+type Endpoint = {
+  url: URLPattern;
+  method?: ApiRequestDescription["method"];
+  response: unknown;
+  params?: BaseRequestParams;
+};
 
 export const useAuthTokensApi = defineStore("authTokens", {
   actions: {

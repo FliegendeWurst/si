@@ -45,14 +45,14 @@ function describePattern(pattern: URLPattern): [string, string] {
 
 export interface ApiRequestDescription<
   Response = any,
-  RequestParams = Record<string, unknown>,
+  RequestParams extends BaseRequestParams = BaseRequestParams,
 > {
   /** http request method, defaults to "get" */
   method?: "get" | "patch" | "post" | "put" | "delete"; // defaults to "get" if empty
   /** url to request, or url pattern for improved instrumentation when the url path constains data */
   url?: string | URLPattern;
   /** request data, passed as querystring for GET, body for everything else */
-  params?: RequestParams & { requestUlid?: RequestUlid };
+  params?: RequestParams;
   /** if a multipart form is being sent in a put/post/patch */
   formData?: FormData;
   /** function to call if request is successfull (2xx) - usually contains changes to the store */
@@ -81,6 +81,10 @@ export interface ApiRequestDescription<
 // TODO: need to rework these types, and be more flexible... See vue-query for ideas
 export type RequestStatusKeyArg = string | number | undefined | null;
 
+export type BaseRequestParams = Record<string, unknown> & {
+  requestUlid?: RequestUlid;
+};
+
 /**
  * type describing how we store a single request status
  *
@@ -92,7 +96,7 @@ export type RequestStatusKeyArg = string | number | undefined | null;
  */
 interface RawApiRequestStatus<
   Response = any,
-  RequestParams = Record<string, unknown>,
+  RequestParams extends BaseRequestParams = BaseRequestParams,
 > {
   /**
    * When the current request was made.
@@ -124,13 +128,15 @@ interface RawApiRequestStatus<
    * - `{ error: any }` if the request failed
    */
   completed: DeferredPromise<DataOrError<Response>>;
+  /** The response data. */
+  response?: AxiosResponse<Response>;
 }
 
 /**
  * Debounced API request status. type describing the computed getter with some convenience properties */
 export interface ApiRequestStatus<
   Response = any,
-  RequestParams = Record<string, unknown>,
+  RequestParams extends BaseRequestParams = BaseRequestParams,
 > extends Readonly<Partial<RawApiRequestStatus<Response, RequestParams>>> {
   /**
    * The last time the request was successful (if ever).
@@ -147,14 +153,15 @@ export interface ApiRequestStatus<
 
 export type DataOrError<Response = any> =
   | { data: Response; error?: undefined }
-  | { error: any; data?: undefined };
+  | { error: Error; data?: undefined };
 
 export class ApiRequestDebouncer<
   Response = any,
-  RequestParams = Record<string, unknown>,
+  RequestParams extends BaseRequestParams = BaseRequestParams,
 > {
   private request?: RawApiRequestStatus;
   private lastSuccessAt?: Date;
+  private lastSuccessfulResponse?: AxiosResponse<Response>;
 
   // triggers a named api request passing in a payload
   // this makes the api request, tracks the request status, handles errors, etc
@@ -162,11 +169,11 @@ export class ApiRequestDebouncer<
   async triggerApiRequest(
     api: AxiosInstance,
     requestSpec: ApiRequestDescription<Response, RequestParams>,
-    callbackArg: any,
     extraTracingArgs: {
       "si.workspace.id"?: string;
       "si.change_set.id"?: string;
     },
+    callbackArg: any,
   ): Promise<DataOrError<Response>> {
     /* eslint-disable no-param-reassign,consistent-return */
     // console.log('trigger api request', actionName, requestSpec);
@@ -322,6 +329,7 @@ export class ApiRequestDebouncer<
         // ideally we would mark received at the same time as the changes made during onSuccess, but not sure it's possible
         // store.$patch((state) => {
         this.lastSuccessAt = new Date();
+        this.lastSuccessfulResponse = response;
         (this.request as RawApiRequestStatus).receivedAt = new Date();
         // });
 
@@ -407,6 +415,7 @@ export class ApiRequestDebouncer<
     }
     return {
       ...rawStatus,
+      data: rawStatus.response?.data,
       lastSuccessAt: this.lastSuccessAt,
       isRequested: true,
       isPending: !rawStatus.receivedAt,
@@ -418,6 +427,183 @@ export class ApiRequestDebouncer<
         errorCode: rawStatus.error.data?.error?.type,
       }),
     };
+  }
+}
+
+// const BY_ID_PARAM_NAME = Symbol("API_CHILDREN_BY_ID_PARAM_NAME");
+// export type ById<Id extends string | null | undefined = string> = { [BY_ID_PARAM_NAME]: string };
+// export function ById<Id extends string | null | undefined = string>(idParamName: string): ById<Id> {
+//   return {
+//     [BY_ID_PARAM_NAME]: idParamName,
+//   }
+// }
+// ById.isById = (value: any): value is ById => BY_ID_PARAM_NAME in value;
+
+type DefineFn<T = unknown> = (route: ApiBuilder) => T;
+
+type ApiDefinition = ApiChildren | DefineFn;
+type ApiDefinitionResult<D extends ApiDefinition> = D extends DefineFn<infer T>
+  ? T
+  : D extends ApiChildren
+  ? ApiChildrenResult<D>
+  : never;
+type ApiChildren = { [key in string]: ApiDefinition } & ThisType<ApiBuilder>;
+type ApiChildrenResult<C extends ApiChildren> = {
+  [key in keyof C]: ApiDefinitionResult<C[key]>;
+};
+
+export class ApiBuilder {
+  constructor(
+    public readonly api: AxiosInstance,
+    public readonly url: URLPattern = [],
+  ) {}
+
+  define<D extends ApiDefinition>(definition: D): ApiDefinitionResult<D> {
+    if (typeof definition === "function")
+      return definition(this) as ApiDefinitionResult<D>;
+
+    return Object.fromEntries(
+      Object.keys(definition).map((key) => [
+        key,
+        this.child([key]).define(definition[key]),
+      ]),
+    ) as ApiDefinitionResult<D>;
+  }
+
+  child(path: URLPattern) {
+    return new ApiBuilder(this.api, [...this.url, ...path]);
+  }
+
+  method<
+    Response = unknown,
+    RequestParams extends BaseRequestParams = Record<string, never>,
+  >(method: ApiRequestDescription["method"]) {
+    return new ApiEndpoint<Response, RequestParams>(this.api, this.url, method);
+  }
+
+  get<
+    Response = unknown,
+    RequestParams extends BaseRequestParams = Record<string, never>,
+  >() {
+    return this.method<Response, RequestParams>("get");
+  }
+
+  post<
+    Response = unknown,
+    RequestParams extends BaseRequestParams = Record<string, never>,
+  >() {
+    return this.method<Response, RequestParams>("post");
+  }
+
+  delete<
+    Response = unknown,
+    RequestParams extends BaseRequestParams = Record<string, never>,
+  >() {
+    return this.method<Response, RequestParams>("post");
+  }
+
+  // /**
+  //  * Create an endpoint function that takes in an ID and returns the (cached!) endpoint.
+  //  *
+  //  * Example:
+  //  *
+  //  * ```typescript
+  //  * const api = defineDebouncedApi(axiosApi, (api) => api.children({
+  //  *   workspaces: (workspaces) => ({
+  //  *     workspace: workspaces.childById("workspaceId").define((workspace) => ({
+  //  *       get: workspace.get<Workspace>(),
+  //  *     }))
+  //  *   })
+  //  * })
+  //  *
+  //  * api.workspaces.workspace("workspaceId")
+  //  * ```
+  //  */
+  // childById<Id extends string | null | undefined = string>(idParamName: string) {
+  //   const childCache = new Map<Id, ApiEndpoint>();
+  //   return {
+  //     define<Child extends ApiDefinition>(child: Child): ApiDefinitionResult<Child> {
+  //       function childById(id: Id) {}
+  //       return (id: Id) => {
+  //         if (!childCache.has(id)) childCache.set(id, this.child([{ [idParamName]: id }]);
+  //         return childCache.get(id);
+  //       }
+  //     };
+  //   return (id: Id) => {
+  //   };
+  // }
+}
+
+export class ApiEndpoint<
+  Response = any,
+  RequestParams extends BaseRequestParams = BaseRequestParams,
+> {
+  private debouncer = new ApiRequestDebouncer<Response, RequestParams>();
+  constructor(
+    public readonly api: AxiosInstance,
+    public readonly url: URLPattern,
+    public readonly method: ApiRequestDescription["method"],
+    private readonly extraTracingArgs: {
+      "si.workspace.id"?: string;
+      "si.change_set.id"?: string;
+    } = {},
+    private readonly callbackArg?: any,
+  ) {
+    // Initialize workspaceId and changeSetId from URLPattern
+    for (const part of url) {
+      if (typeof part === "string") continue;
+      if (typeof part.workspaceId === "string")
+        this.extraTracingArgs["si.workspace.id"] ??= part.workspaceId;
+      if (typeof part.changeSetId === "string")
+        this.extraTracingArgs["si.change_set.id"] ??= part.changeSetId;
+    }
+  }
+
+  get status() {
+    return this.debouncer.getRawStatus();
+  }
+
+  /**
+   * Execute this API request. Returns the status instead of a promise.
+   *
+   * Helpful in places where you care about the status but don't need the data.
+   *
+   * Also useful because you avoid TS warnings about not awaiting a promise.
+   */
+  trigger(params?: RequestParams): ApiRequestStatus {
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    this.execute(params);
+    return this.status;
+  }
+
+  /**
+   * Fetch the data from the API, throwing an error if the request fails.
+   *
+   * Intended for places that want the data in direct form, and can handle errors.
+   */
+  async fetch(params?: RequestParams): Promise<Response> {
+    const result = await this.execute(params);
+    if (result.error) throw result.error;
+    return result.data;
+  }
+
+  /**
+   * Execute this API request.
+   *
+   * Awaiting this promise will yield either { data: Response } or { error: Error }.
+   * Will not throw.
+   */
+  execute(params?: RequestParams): Promise<DataOrError<Response>> {
+    return this.debouncer.triggerApiRequest(
+      this.api,
+      {
+        method: this.method,
+        url: this.url,
+        params,
+      },
+      this.extraTracingArgs,
+      this.callbackArg,
+    );
   }
 }
 

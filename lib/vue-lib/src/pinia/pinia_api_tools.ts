@@ -23,6 +23,7 @@ import {
   ApiRequestDebouncer,
   ApiRequestDescription,
   ApiRequestStatus,
+  BaseRequestParams,
   RequestStatusKeyArg,
   RequestUlid,
 } from "../utils/api_debouncer";
@@ -41,7 +42,7 @@ type ApiRequestActionsOnly<A> = SubType<
   A,
   (
     ...args: any
-  ) => Promise<ApiRequest<unknown, unknown> | typeof ApiRequest.noop>
+  ) => Promise<ApiRequest<unknown, BaseRequestParams> | typeof ApiRequest.noop>
 >;
 
 // augment pinia TS types for our plugin - see https://pinia.vuejs.org/core-concepts/plugins.html#typescript
@@ -80,7 +81,7 @@ declare module "pinia" {
 
 interface ExtendedApiRequestDescription<
   Response = any,
-  RequestParams = Record<string, unknown>,
+  RequestParams extends BaseRequestParams = BaseRequestParams,
 > extends ApiRequestDescription<Response, RequestParams> {
   api?: AxiosInstance;
   /** additional args to key the request status */
@@ -89,7 +90,7 @@ interface ExtendedApiRequestDescription<
 
 export class ApiRequest<
   Response = any,
-  RequestParams = Record<string, unknown>,
+  RequestParams extends BaseRequestParams = BaseRequestParams,
 > {
   // these are used to attach the result which can be used directly by the caller
   // most data and request status info should be used via the store, but it is useful sometimes
@@ -157,7 +158,7 @@ export class ApiRequest<
 export function registerApi(axiosInstance: AxiosInstance) {
   class ApiRequestForSpecificApi<
     Response = any,
-    RequestParams = Record<string, unknown>,
+    RequestParams extends BaseRequestParams = BaseRequestParams,
   > extends ApiRequest<Response, RequestParams> {
     static api = axiosInstance;
   }
@@ -237,11 +238,11 @@ export const initPiniaApiToolkitPlugin = (config: { api: AxiosInstance }) => {
           ].triggerApiRequest(
             actionResult.requestSpec.api ?? config.api,
             actionResult.requestSpec,
-            store,
             {
               "si.workspace.id": store.workspaceId,
               "si.change_set.id": store.changeSetId,
             },
+            store,
           );
           if (!triggerResult) {
             throw new Error(`No trigger result for ${trackingKey}`);
